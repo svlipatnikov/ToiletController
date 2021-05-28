@@ -164,8 +164,8 @@ unsigned long Manual_Water_relay_time;        // время ручного уп�
 unsigned long Last_check_time;                // время крайней проверки подключения к сервисам
 unsigned long Manual_mode_time;               // время включения ручного режима управления лентой 
 unsigned long Motion_time = ON_TIME;          // время срабатывания датчика движения
-unsigned long Water_alarm_time;               // время последнего получения сообщения о протечке воды
 unsigned long Last_get_ntp_time;              // время крайнего получения вермени NTP
+unsigned long Water_alarm_time;               // время сигнала протечки воды
 
 byte Manual_mode = OFF;                       // режим ленты, управляемый через MQTT
 bool Toilet_relay_ON = false;                 // состояние реле гигиенического душа
@@ -174,16 +174,17 @@ bool Water_relay_ON = true;                   // состояние реле в�
 byte LED_effect = OFF;                        // текущий эфффект светодиодной ленты
 byte last_LED_effect = OFF;                   // эфффект светодиодной ленты на предыдущем такте 
 bool Night = false;                           // признак НОЧЬ по серверу NTP
+bool Alarm_flag = false;                      // признак протечки
 
 // топики управления реле и управления лентой
-const char topic_water_relay_ctrl[] = "/sv.lipatnikov@gmail.com/toilet/water_ctrl";
-const char topic_toilet_relay_ctrl[] = "/sv.lipatnikov@gmail.com/toilet/toilet_ctrl";
-const char topic_led_ctrl[] = "/sv.lipatnikov@gmail.com/toilet/led_ctrl";
+const char topic_water_relay_ctrl[] = "user_1502445e/toilet/water_ctrl";
+const char topic_toilet_relay_ctrl[] = "user_1502445e/toilet/toilet_ctrl";
+const char topic_led_ctrl[] = "user_1502445e/toilet/led_ctrl";
 
 // топики статуса реле и эффекта ленты
-const char topic_water_relay_state[] = "/sv.lipatnikov@gmail.com/toilet/water_state";
-const char topic_toilet_relay_state[] = "/sv.lipatnikov@gmail.com/toilet/toilet_state";
-const char topic_led_state[] = "/sv.lipatnikov@gmail.com/toilet/led_state";
+const char topic_water_relay_state[] = "user_1502445e/toilet/water";
+const char topic_toilet_relay_state[] = "user_1502445e/toilet/toilet";
+const char topic_led_state[] = "user_1502445e/toilet/led";
 
 //=========================================================================================
 
@@ -249,7 +250,7 @@ void loop() {
   // сетевые функции
   httpServer.handleClient();          // для обновления по воздуху   
   client.loop();                      // для функций MQTT 
-  bool Alarm_flag = Receive_UDP();    // получение данных от датчиков протечки
+  Receive_UDP();                      // получение данных от датчиков протечки
   
   // управляем реле воды по сигналу UDP только если не ручной режим
   if ((long)millis() - Manual_Water_relay_time > MANUAL_WATER_DELAY) {
@@ -301,68 +302,6 @@ bool Motion () {
   }  
 }
 
-
-//=========================================================================================
-// прием пакетов по UDP
-bool First_UDP_receive_flag = false;       
-
-bool Receive_UDP(void) {
-  int packetSize = Udp.parsePacket();
-  
-  if (packetSize)  {
-    int len = Udp.read(Buffer, UDP_TX_PACKET_MAX_SIZE); 
-    if ((len == 2) && (Buffer[0] == 'w') && (Buffer[1] == '0')) { 
-      Water_alarm_time = millis(); 
-      if (!First_UDP_receive_flag) First_UDP_receive_flag = true;
-      return true;       
-    }    
-  }
-  
-  if (!First_UDP_receive_flag) // если ни разу не был получен UDP пакет 
-    return false;
-  else if ((long)millis() - Water_alarm_time > WATER_BLOCK_TIME)  // если протечка была давно
-    return false;      
-  else                   
-    return true; 
-}
-
-
-//=========================================================================================
-//функции MQTT
-
-// функция подписки на топики !!!
-void MQTT_subscribe(void) {
-  if (client.connected()){
-    client.subscribe(topic_water_relay_ctrl);  
-    client.subscribe(topic_toilet_relay_ctrl); 
-    client.subscribe(topic_led_ctrl);      
-  }
-}
-
-// получение данных от сервера
-void mqtt_get(char* topic, byte* payload, unsigned int length) {
-  // создаем копию полученных данных
-  char localPayload[length + 1];
-  for (int i=0;i<length;i++) { localPayload[i] = (char)payload[i]; }
-  localPayload[length] = 0;
-
-  // присваиваем переменным значения в зависимости от топика 
-  if (strcmp(topic, topic_water_relay_ctrl) == 0) {
-    int ivalue = 0; sscanf(localPayload, "%d", &ivalue);
-    Water_relay_ON = (bool)ivalue;   
-    Manual_Water_relay_time = millis(); 
-  }  
-  else if (strcmp(topic, topic_toilet_relay_ctrl) == 0) {
-    int ivalue = 0; sscanf(localPayload, "%d", &ivalue);
-    Toilet_relay_ON = (bool)ivalue;   
-    Manual_Toilet_relay_time = millis();
-  }  
-  else if (strcmp(topic, topic_led_ctrl) == 0) {    
-    int ivalue = 0; sscanf(localPayload, "%d", &ivalue);
-    Manual_mode = (byte)ivalue; 
-    Manual_mode_time = millis();
-  }
-}
 
 //=========================================================================================
 // функция управления реле
