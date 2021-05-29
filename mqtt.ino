@@ -52,7 +52,8 @@ void MQTT_subscribe(void) {
   if (client.connected()){
     client.subscribe(topic_water_relay_ctrl);  
     client.subscribe(topic_toilet_relay_ctrl); 
-    client.subscribe(topic_led_ctrl);      
+    client.subscribe(topic_led_ctrl); 
+    client.subscribe(topic_water_alarm);     
   }
 }
 
@@ -68,6 +69,7 @@ void mqtt_get(char* topic, byte* payload, unsigned int length) {
     int ivalue = 0; sscanf(localPayload, "%d", &ivalue);
     Water_relay_ON = (bool)ivalue;   
     Manual_Water_relay_time = millis(); 
+    if (!ivalue) Water_alarm_flag = false;
   }  
   else if (strcmp(topic, topic_toilet_relay_ctrl) == 0) {
     int ivalue = 0; sscanf(localPayload, "%d", &ivalue);
@@ -78,5 +80,9 @@ void mqtt_get(char* topic, byte* payload, unsigned int length) {
     int ivalue = 0; sscanf(localPayload, "%d", &ivalue);
     Manual_mode = (byte)ivalue; 
     Manual_mode_time = millis();
+  }
+  else if (strcmp(topic, topic_water_alarm) == 0) {
+    int ivalue = 0; sscanf(localPayload, "%d", &ivalue);
+    Water_alarm_flag = (bool)ivalue; 
   }
 }

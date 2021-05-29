@@ -145,7 +145,8 @@ const char* mqtt_client_name = "Toilet_esp8266";    // Имя клиента
 
 
 #include <NTPClient.h>
-NTPClient timeClient(Udp, "europe.pool.ntp.org");
+WiFiUDP Udp2;
+NTPClient timeClient(Udp2, "europe.pool.ntp.org");
 
 
 const int WATER_BLOCK_TIME = 60*1000;         // дительность блокировки крана воды после пропадания тревоги
@@ -155,7 +156,7 @@ const int RESTART_PERIOD = 30*60*1000;        // время до ребута, �
 const int MAX_MANUAL_PERIOD = 1000*60*30;     // максимальное время работы в ручном режиме 30 мин
 const int MANUAL_TOILET_DELAY = 60*1000;      // время приоретета в ручном режиме для реле гиг душа
 const int MANUAL_WATER_DELAY = 60*1000;       // время приоретета в ручном режиме для реле воды
-const int VALVE_MIN_CHANGE_TIME = 15*1000;    // время переключения помпы (из ON в OFF или наоборот)
+const int VALVE_MIN_CHANGE_TIME = 15*1000;     // время переключения помпы (из ON в OFF или наоборот)
 const int GET_NTP_TIME_PERIOD = 60*1000;      // период получения времни с сервера NTP
 
 unsigned long Last_online_time;               // время когда модуль был онлайн
@@ -166,6 +167,7 @@ unsigned long Manual_mode_time;               // время включения �
 unsigned long Motion_time = ON_TIME;          // время срабатывания датчика движения
 unsigned long Last_get_ntp_time;              // время крайнего получения вермени NTP
 unsigned long Water_alarm_time;               // время сигнала протечки воды
+unsigned long Last_change_Water_relay;        // время переключения гидрострелки
 
 byte Manual_mode = OFF;                       // режим ленты, управляемый через MQTT
 bool Toilet_relay_ON = false;                 // состояние реле гигиенического душа
@@ -174,7 +176,7 @@ bool Water_relay_ON = true;                   // состояние реле в�
 byte LED_effect = OFF;                        // текущий эфффект светодиодной ленты
 byte last_LED_effect = OFF;                   // эфффект светодиодной ленты на предыдущем такте 
 bool Night = false;                           // признак НОЧЬ по серверу NTP
-bool Alarm_flag = false;                      // признак протечки
+bool Water_alarm_flag = false;                // признак протечки
 
 // топики управления реле и управления лентой
 const char topic_water_relay_ctrl[] = "user_1502445e/toilet/water_ctrl";
@@ -185,6 +187,8 @@ const char topic_led_ctrl[] = "user_1502445e/toilet/led_ctrl";
 const char topic_water_relay_state[] = "user_1502445e/toilet/water";
 const char topic_toilet_relay_state[] = "user_1502445e/toilet/toilet";
 const char topic_led_state[] = "user_1502445e/toilet/led";
+
+const char topic_water_alarm[] = "user_1502445e/bath/alarm";
 
 //=========================================================================================
 
@@ -200,7 +204,7 @@ void setup() {
   Connect_WiFi(IP_Toilet_controller, NEED_STATIC_IP);
   Connect_mqtt(mqtt_client_name);
   MQTT_subscribe();
-  
+ 
   // защита от ложных срабатываний
   MQTT_publish_int(topic_led_ctrl, OFF); 
   MQTT_publish_int(topic_led_state, OFF);
@@ -210,8 +214,6 @@ void setup() {
 }
 
 //========================================================================================
-
-bool first = true;
 
 void loop() {
   
@@ -224,7 +226,7 @@ void loop() {
     else  
       Night = false;
   }  
-  
+
   // проверка сигнала от датчика движения
   bool Motion_flag = Motion();
 
@@ -254,8 +256,8 @@ void loop() {
   
   // управляем реле воды по сигналу UDP только если не ручной режим
   if ((long)millis() - Manual_Water_relay_time > MANUAL_WATER_DELAY) {
-    if (Alarm_flag) Water_relay_ON = false;
-    else            Water_relay_ON = true;
+    if (Water_alarm_flag) Water_relay_ON = false;
+    else                  Water_relay_ON = true;
   }
   
   // управляем гиг душем по датчику движения только если не ручной режим 
@@ -294,12 +296,10 @@ bool Motion () {
     Motion_time = millis(); 
     return true; 
   }
-  else {
-    if ((long)millis() - Motion_time > ON_TIME) 
-      return false;     
-    else 
-      return true; 
-  }  
+  if ((long)millis() - Motion_time < ON_TIME){
+    return true;     
+  }
+  return false;   
 }
 
 
@@ -308,18 +308,15 @@ bool Motion () {
 
 bool last_state_Toilet_relay = false;
 bool last_state_Water_relay = true;
-unsigned long last_change_Water_relay;
-unsigned long last_change_Toilet_relay;
 
 void Relay_control (void) {
-  if ((Toilet_relay_ON != last_state_Toilet_relay) && ((long)millis() - last_change_Toilet_relay > VALVE_MIN_CHANGE_TIME)) {
-    last_change_Toilet_relay = millis();    
+  if (Toilet_relay_ON != last_state_Toilet_relay) {      
     digitalWrite(PIN_toilet_relay, !Toilet_relay_ON);     // реле управляется низким уровнем 0=кран гиг душа открыт  
     last_state_Toilet_relay = Toilet_relay_ON;
     MQTT_publish_int(topic_toilet_relay_state, Toilet_relay_ON); // публикация данных в MQTT                 
   }
-  if ((Water_relay_ON != last_state_Water_relay) && ((long)millis() - last_change_Water_relay > VALVE_MIN_CHANGE_TIME)) { 
-    last_change_Water_relay = millis();                   // запоминаем время изменения состояния крана
+  if ((Water_relay_ON != last_state_Water_relay) && ((long)millis() - Last_change_Water_relay > VALVE_MIN_CHANGE_TIME)) { 
+    Last_change_Water_relay = millis();                   // запоминаем время изменения состояния крана
     digitalWrite(PIN_water_relay, Water_relay_ON);        // реле управляется низким уровнем 0=кран выключен 
     last_state_Water_relay = Water_relay_ON;  
     MQTT_publish_int(topic_water_relay_state, Water_relay_ON);  // публикация данных в MQTT    
